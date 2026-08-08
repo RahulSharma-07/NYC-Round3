@@ -1,0 +1,2 @@
+[console_scripts]
+pc-use = pc_use.cli:main
