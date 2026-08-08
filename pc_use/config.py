@@ -23,12 +23,10 @@ class Config:
 
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-        self.api_key: str = api_key if api_key is not None else os.getenv("GEMINI_API_KEY", "")
         self.use_voice: bool = use_voice if use_voice is not None else True
 
-        self.backend: str = (backend or os.getenv("PC_USE_BACKEND", "gemini")).lower()
-        if self.backend not in ("gemini", "groq"):
-            self.backend = "gemini"
+        # Groq is the only supported backend
+        self.backend: str = "groq"
 
         self.groq_api_key: str = (
             groq_api_key if groq_api_key is not None else os.getenv("GROQ_API_KEY", "")

@@ -1,3 +1,4 @@
+import ctypes
 import os
 import platform
 import subprocess
@@ -40,19 +41,35 @@ class VoiceComputerController:
 
     # name -> executable/command Windows can run directly (on PATH or a URI scheme)
     WINDOWS_APP_COMMANDS = {
-        "chrome": "chrome.exe", "google chrome": "chrome.exe", "browser": "chrome.exe",
-        "firefox": "firefox.exe", "mozilla": "firefox.exe",
+        # browsers
+        "chrome": "chrome.exe", "google chrome": "chrome.exe",
+        "browser": "chrome.exe", "web browser": "chrome.exe",
+        "internet browser": "chrome.exe", "internet": "chrome.exe",
+        "firefox": "firefox.exe", "mozilla": "firefox.exe", "mozilla firefox": "firefox.exe",
         "edge": "msedge.exe", "microsoft edge": "msedge.exe",
+        # editors / productivity
         "notepad": "notepad.exe", "text editor": "notepad.exe",
         "calculator": "calc.exe", "calc": "calc.exe",
-        "explorer": "explorer.exe", "file explorer": "explorer.exe", "files": "explorer.exe",
+        "explorer": "explorer.exe", "file explorer": "explorer.exe",
+        "files": "explorer.exe", "this pc": "explorer.exe", "my computer": "explorer.exe",
+        # shells
         "cmd": "cmd.exe", "command prompt": "cmd.exe",
         "terminal": "wt.exe", "powershell": "powershell.exe",
+        # office
         "word": "winword.exe", "microsoft word": "winword.exe",
         "excel": "excel.exe", "microsoft excel": "excel.exe",
         "powerpoint": "powerpnt.exe", "microsoft powerpoint": "powerpnt.exe",
+        # misc
         "paint": "mspaint.exe",
         "settings": "ms-settings:", "control panel": "control.exe",
+        "task manager": "taskmgr.exe",
+        "notepad++": "notepad++.exe",
+        "vlc": "vlc.exe",
+        "spotify": "spotify.exe",
+        "discord": "discord.exe",
+        "slack": "slack.exe",
+        "zoom": "zoom.exe",
+        "teams": "ms-teams:", "microsoft teams": "ms-teams:",
     }
     # fallback install locations for apps that aren't on PATH by default
     WINDOWS_APP_PATHS = {
@@ -125,22 +142,49 @@ class VoiceComputerController:
     def _listen_for_command(self) -> str | None:
         try:
             with self.microphone as source:
-                logger.info("Listening for command...")
+                logger.info("Listening for command (Hindi/English)...")
                 audio = self.recognizer.listen(source, timeout=20, phrase_time_limit=10)
 
             logger.info("Processing speech...")
-            command = self.recognizer.recognize_google(audio)
-            logger.info("You said: %s", command)
+
+            # Try Hindi first, fall back to English
+            command = None
+            detected_lang = "en"
+            try:
+                command = self.recognizer.recognize_google(audio, language="hi-IN")
+                detected_lang = "hi"
+                logger.info("Detected Hindi: %s", command)
+            except Exception:
+                pass
+
+            if not command:
+                try:
+                    command = self.recognizer.recognize_google(audio, language="en-US")
+                    detected_lang = "en"
+                    logger.info("Detected English: %s", command)
+                except Exception:
+                    logger.warning("Could not understand the audio in Hindi or English")
+                    return None
+
+            # Translate Hindi to English
+            if detected_lang == "hi":
+                try:
+                    from deep_translator import GoogleTranslator
+                    translated = GoogleTranslator(source="hi", target="en").translate(command)
+                    logger.info("Translated to English: %s", translated)
+                    print(f"🎤 Hindi: {command}")
+                    print(f"🔄 English: {translated}")
+                    command = translated
+                except Exception as e:
+                    logger.warning("Translation failed, using original: %s", e)
+                    print(f"🎤 You said: {command}")
+            else:
+                print(f"🎤 You said: {command}")
+
             return command.lower()
 
-        except sr.WaitTimeoutError:
-            logger.warning("No speech detected within timeout period")
-            return None
-        except sr.UnknownValueError:
-            logger.warning("Could not understand the audio")
-            return None
-        except sr.RequestError as e:
-            logger.error("Error with speech recognition service: %s", e)
+        except Exception as e:
+            logger.error("Error in voice recognition: %s", e)
             return None
 
     def take_screenshot(self) -> Image.Image:
@@ -194,6 +238,9 @@ class VoiceComputerController:
                 return self._handle_scroll_action(step)
             if action == "open":
                 return self._handle_open_action(step)
+            if action == "navigate":
+                url = step.get("url", step.get("target", ""))
+                return self._navigate_to_url(url) if url else False
             if action == "close":
                 return self._handle_close_action(step)
             if action == "hotkey":
@@ -291,6 +338,11 @@ class VoiceComputerController:
     def _handle_open_action(self, action_data: dict[str, Any]) -> bool:
         try:
             app_name = action_data.get("application", "").lower()
+            url = action_data.get("url", "")
+
+            # If a URL is provided, open it directly in the browser
+            if url:
+                return self._open_url(url)
 
             if self._try_direct_launch(app_name):
                 return True
@@ -310,6 +362,132 @@ class VoiceComputerController:
 
         except Exception as e:
             logger.error("Error in open action: %s", e)
+            return False
+
+    def _open_url(self, url: str) -> bool:
+        """Open a URL — reuse existing browser window if open, else launch new."""
+        try:
+            logger.info("Opening URL: %s", url)
+            if self.is_windows:
+                if self._is_browser_running():
+                    # Browser already open — focus it then navigate via address bar
+                    self._focus_any_browser()
+                    time.sleep(0.5)
+                    return self._navigate_to_url(url)
+                else:
+                    # No browser open — launch Chrome/Edge then navigate
+                    launched = False
+                    for exe in ("chrome.exe", "msedge.exe", "firefox.exe"):
+                        if self._run_windows_command(exe):
+                            launched = True
+                            time.sleep(2)
+                            self._focus_any_browser()
+                            time.sleep(0.5)
+                            return self._navigate_to_url(url)
+                    if not launched:
+                        import webbrowser
+                        webbrowser.open(url)
+            else:
+                import webbrowser
+                webbrowser.open(url)
+            return True
+        except Exception as e:
+            logger.error("Failed to open URL %s: %s", url, e)
+            return False
+
+    def _focus_any_browser(self) -> bool:
+        """Bring the first visible browser window to the foreground. Returns True if found."""
+        if not self.is_windows:
+            return False
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            browser_titles = ["chrome", "firefox", "edge", "mozilla"]
+            found_hwnd: list[int] = []
+
+            @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)  # type: ignore
+            def callback(hwnd: int, _: int) -> bool:
+                if user32.IsWindowVisible(hwnd):
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buf = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buf, length + 1)
+                        title = buf.value.lower()
+                        if any(b in title for b in browser_titles):
+                            found_hwnd.append(hwnd)
+                return True
+
+            user32.EnumWindows(callback, 0)
+            if found_hwnd:
+                hwnd = found_hwnd[0]
+                # Restore if minimised
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                time.sleep(0.1)
+                # Force foreground using thread attachment trick
+                foreground_hwnd = user32.GetForegroundWindow()
+                foreground_tid = user32.GetWindowThreadProcessId(foreground_hwnd, None)
+                target_tid = user32.GetWindowThreadProcessId(hwnd, None)
+                if foreground_tid != target_tid:
+                    user32.AttachThreadInput(foreground_tid, target_tid, True)
+                    user32.BringWindowToTop(hwnd)
+                    user32.SetForegroundWindow(hwnd)
+                    user32.AttachThreadInput(foreground_tid, target_tid, False)
+                else:
+                    user32.SetForegroundWindow(hwnd)
+                time.sleep(0.3)
+                logger.info("Focused browser window (hwnd=%d)", hwnd)
+                return True
+        except Exception as e:
+            logger.warning("Could not focus browser: %s", e)
+        return False
+
+    def _is_browser_running(self) -> bool:
+        """Check if any browser window is currently open on Windows."""
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+            browser_titles = ["chrome", "firefox", "edge", "mozilla"]
+            found = []
+
+            @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)  # type: ignore
+            def callback(hwnd: int, _: int) -> bool:
+                if user32.IsWindowVisible(hwnd):
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buf = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buf, length + 1)
+                        title = buf.value.lower()
+                        if any(b in title for b in browser_titles):
+                            found.append(hwnd)
+                return True
+
+            user32.EnumWindows(callback, 0)
+            return len(found) > 0
+        except Exception:
+            return False
+
+    def _navigate_to_url(self, url: str) -> bool:
+        """Type a URL into the focused browser's address bar and navigate."""
+        try:
+            logger.info("Navigating to: %s", url)
+            pyautogui.hotkey("ctrl", "l")  # focus address bar
+            time.sleep(0.6)
+            pyautogui.hotkey("ctrl", "a")  # select all existing text
+            time.sleep(0.2)
+            # Use pyperclip to paste URL instead of typewrite (faster, handles special chars)
+            try:
+                import pyperclip
+                pyperclip.copy(url)
+                pyautogui.hotkey("ctrl", "v")
+            except Exception:
+                pyautogui.typewrite(url, interval=0.03)
+            time.sleep(0.3)
+            pyautogui.press("enter")
+            time.sleep(1.5)
+            return True
+        except Exception as e:
+            logger.error("Navigation failed: %s", e)
             return False
 
     def _try_direct_launch(self, app_name: str) -> bool:
@@ -376,33 +554,114 @@ class VoiceComputerController:
             logger.error("Mac app launch failed: %s", e)
             return False
 
+    def _focus_foreground(self, app_name: str, wait: float = 1.5) -> None:
+        """Wait for a Windows app to appear then force it to the foreground."""
+        if not self.is_windows:
+            return
+        time.sleep(wait)
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+
+            # Try to find the window by a partial title match
+            needle = app_name.strip().lower()
+
+            # Map common app names to expected window title fragments
+            title_hints = {
+                "calculator": "calculator",
+                "calc": "calculator",
+                "notepad": "notepad",
+                "chrome": "chrome",
+                "google chrome": "chrome",
+                "firefox": "firefox",
+                "edge": "edge",
+                "microsoft edge": "edge",
+                "explorer": "file explorer",
+                "file explorer": "file explorer",
+                "files": "file explorer",
+                "word": "word",
+                "excel": "excel",
+                "powerpoint": "powerpoint",
+                "paint": "paint",
+                "cmd": "command prompt",
+                "command prompt": "command prompt",
+                "terminal": "terminal",
+                "powershell": "powershell",
+            }
+            search = title_hints.get(needle, needle)
+
+            found_hwnd: list[int] = []
+
+            @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)  # type: ignore
+            def enum_callback(hwnd: int, _lparam: int) -> bool:
+                if user32.IsWindowVisible(hwnd):
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buf = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buf, length + 1)
+                        title = buf.value.lower()
+                        if search in title:
+                            found_hwnd.append(hwnd)
+                return True
+
+            user32.EnumWindows(enum_callback, 0)
+
+            if found_hwnd:
+                hwnd = found_hwnd[0]
+                # Restore if minimised
+                SW_RESTORE = 9
+                user32.ShowWindow(hwnd, SW_RESTORE)
+                user32.SetForegroundWindow(hwnd)
+                logger.info("Brought '%s' window to foreground", app_name)
+            else:
+                logger.warning("Could not find window for '%s' to focus", app_name)
+        except Exception as e:
+            logger.warning("Window focus failed for '%s': %s", app_name, e)
+
     def _launch_windows_app(self, app_name: str) -> bool:
         name = app_name.strip().lower()
         if not name:
             return False
 
+        # Direct map lookup
         command = self.WINDOWS_APP_COMMANDS.get(name)
         if command and self._run_windows_command(command):
+            self._focus_foreground(app_name)
             return True
 
-        # fall back to a shortcut on the Start Menu (handles arbitrary app names,
-        # the Windows equivalent of macOS `open -a "<AppName>"`)
+        # Start Menu shortcut search
         shortcut = self._find_start_menu_shortcut(app_name)
         if shortcut:
             try:
                 os.startfile(shortcut)  # type: ignore[attr-defined]
                 logger.info("Launched %s via Start Menu shortcut", shortcut)
+                self._focus_foreground(app_name)
                 return True
             except OSError as e:
                 logger.warning("Failed to launch shortcut %s: %s", shortcut, e)
 
-        # last resort: let the shell resolve it (works for anything on PATH)
-        try:
-            subprocess.Popen(f'start "" "{app_name}"', shell=True)
-            return True
-        except OSError as e:
-            logger.error("Windows app launch failed for %s: %s", app_name, e)
-            return False
+        # If it sounds like a browser, try every known browser exe
+        browser_keywords = {"browser", "web", "internet", "chrome", "edge", "firefox", "safari"}
+        if any(kw in name for kw in browser_keywords):
+            for fallback in ("chrome.exe", "msedge.exe", "firefox.exe"):
+                if self._run_windows_command(fallback):
+                    self._focus_foreground(fallback.replace(".exe", ""))
+                    return True
+
+        # Use 'start' shell command only for names that look like real executables
+        # (contain .exe, or are single words without spaces — avoids the Windows
+        # "cannot find 'web browser'" error dialog on multi-word phrases)
+        safe_to_shell = "." in app_name or " " not in app_name.strip()
+        if safe_to_shell:
+            try:
+                subprocess.Popen(f'start "" "{app_name}"', shell=True)
+                self._focus_foreground(app_name)
+                return True
+            except OSError as e:
+                logger.error("Windows app launch failed for %s: %s", app_name, e)
+
+        logger.warning("Could not launch '%s' — no matching app found", app_name)
+        return False
 
     def _run_windows_command(self, command: str) -> bool:
         try:
@@ -414,6 +673,7 @@ class VoiceComputerController:
         except OSError:
             pass
 
+        # Try known full install paths
         for candidate in self.WINDOWS_APP_PATHS.get(command, []):
             resolved = os.path.expandvars(candidate)
             if os.path.exists(resolved):
@@ -422,6 +682,7 @@ class VoiceComputerController:
                     return True
                 except OSError as e:
                     logger.warning("Failed to launch %s: %s", resolved, e)
+
         return False
 
     def _find_start_menu_shortcut(self, app_name: str) -> str | None:
@@ -519,8 +780,8 @@ class VoiceComputerController:
 
                 action_data = self.interpret_command_with_ai(command)
 
-                if action_data.get("confidence", 0) < 0.5:
-                    print("I'm not confident about that command. Please try again.")
+                if action_data.get("confidence", 0) < 0.3:
+                    print(f"Command not understood clearly. Reasoning: {action_data.get('reasoning', 'unknown')}. Please try again.")
                     continue
 
                 success = self.execute_action(action_data)
