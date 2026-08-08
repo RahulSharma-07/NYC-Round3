@@ -1,0 +1,10 @@
+{
+  "voice_sensitivity": 0.7,
+  "execution_speed": "normal",
+  "confirmation_required": false,
+  "learning_enabled": true,
+  "proactive_suggestions": true,
+  "preferred_applications": {},
+  "custom_shortcuts": {},
+  "automation_rules": []
+}
