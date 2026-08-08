@@ -3,7 +3,7 @@
 
 AI-powered voice/text computer controller. Uses Google Gemini to interpret natural language commands and control your computer via PyAutoGUI.
 
-## Demo
+
 
 ## Features
 
