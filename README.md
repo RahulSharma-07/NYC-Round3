@@ -9,11 +9,11 @@ AI-powered voice/text computer controller. Uses Google Gemini to interpret natur
 
 ## Features
  
-- 🎙️ **Voice or text input** — speak commands or type them
-- 🧠 **AI-powered command interpretation** — Gemini figures out intent and breaks it into steps
-- 👁️ **Dynamic element detection** — finds UI elements by describing them (Gemini vision)
-- 💻 **Cross-platform** — works on macOS & Windows
-- 🔁 **Fallback search strategies** — keyboard shortcuts, tab navigation, area clicks
+-  **Voice or text input** — speak commands or type them
+-  **AI-powered command interpretation** — Gemini figures out intent and breaks it into steps
+-  **Dynamic element detection** — finds UI elements by describing them (Gemini vision)
+-  **Cross-platform** — works on macOS & Windows
+-  **Fallback search strategies** — keyboard shortcuts, tab navigation, area clicks
 ## Quick Start
  
 ```bash
